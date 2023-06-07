@@ -10,17 +10,22 @@
 					{
 						"Act": "CREATE",
 						"Spec": {
-							"ClassName": "best-effort-small",
-							"ImageName": "ob-18186591-photon-3-k8s-v1.20.7---vmware.1-tkg.1.7fb9067",
-							"StorageClass": "wcp-storage-policy",
-							"PowerState": "poweredOn"
+							"YamlSpec": "./config/cp_virtualmachine_crd_8client/vm.yaml"
 						}
+					},
+					{
+						"Act": "LIST"
+					},
+					{
+						"Act": "DELETE"
 					}
 				],
 				"SleepTimes": [
-					300000
+					180000,
+					30000,
+					30000
 				],
-				"Count": 8
+				"Count": 4
 			}
 		}
 	]

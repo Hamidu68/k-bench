@@ -1,27 +1,29 @@
 package manager
 
 import (
+	"context"
 	"fmt"
-    "context"
-	"time"
-	"sync"
-	"strconv"
-	"sort"
-	"strings"
-	log "github.com/sirupsen/logrus"
-    "github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
-	restclient "k8s.io/client-go/rest"
-	apiv1 "k8s.io/api/core/v1"
-    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes"
-    ctrlClient "sigs.k8s.io/controller-runtime/pkg/client"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k-bench/perf_util"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/vmware-tanzu/vm-operator-api/api/v1alpha1"
+	apiv1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/kubernetes"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlClient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const vmNamePrefix string = "kbench-vm-"
@@ -30,50 +32,50 @@ const vmNamePrefix string = "kbench-vm-"
  * vmManager manages vms actions and stats.
  */
 type VmManager struct {
-	client            ctrlClient.Client
-	clientsets        []ctrlClient.Client
-	namespaceClient   *kubernetes.Clientset
+	client          ctrlClient.Client
+	clientsets      []ctrlClient.Client
+	namespaceClient *kubernetes.Clientset
 
 	// Mark the client side time stamp for virtual Machines
-	startTimes        map[string]metav1.Time     // start creating Virtual Machine 
-	createdTimes      map[string]metav1.Time   // virtual machine created and powered on.
-	gotIpTimes        map[string]metav1.Time    // virtual machine gets an IP address
-	ReadyTimes        map[string]metav1.Time     // virtual machine in ready state
+	startTimes   map[string]metav1.Time // start creating Virtual Machine
+	createdTimes map[string]metav1.Time // virtual machine created and powered on.
+	gotIpTimes   map[string]metav1.Time // virtual machine gets an IP address
+	ReadyTimes   map[string]metav1.Time // virtual machine in ready state
 
 	// A map to track the API response time for the supported actions
-	apiTimes          map[string][]time.Duration
+	apiTimes map[string][]time.Duration
 
-	namespace       string // The benchmark's default namespace for vm
-	source          string
-	config            *restclient.Config
+	namespace string // The benchmark's default namespace for vm
+	source    string
+	config    *restclient.Config
 
-	vmNs              map[string]string // Used to track vms to namespaces mappings
-	nsSet             map[string]bool   // Used to track created non-default namespaces
+	vmNs  map[string]string // Used to track vms to namespaces mappings
+	nsSet map[string]bool   // Used to track created non-default namespaces
 
-	statsMutex        sync.RWMutex
-	vmMutex           sync.Mutex
-	alMutex           sync.Mutex
+	statsMutex sync.RWMutex
+	vmMutex    sync.Mutex
+	alMutex    sync.Mutex
 
 	// Action functions
-	ActionFuncs       map[string]func(*VmManager, interface{}) error
+	ActionFuncs map[string]func(*VmManager, interface{}) error
 
-	vmController      cache.Controller
-	vmChan            chan struct{}
-	vmThroughput      float32
-	vmAvgLatency      float32
-	negRes            bool 
+	vmController cache.Controller
+	vmChan       chan struct{}
+	vmThroughput float32
+	vmAvgLatency float32
+	negRes       bool
 
-	startTimestamp    string
-	Wg                sync.WaitGroup
+	startTimestamp string
+	Wg             sync.WaitGroup
 
-	startToCreatedLatency, createdToGotIpLatency, startToReadyLatency   perf_util.OperationLatencyMetric
+	startToCreatedLatency, createdToGotIpLatency, startToReadyLatency perf_util.OperationLatencyMetric
 }
 
 func NewVmManager() Manager {
 	cst := make(map[string]metav1.Time, 0)
-	ct :=  make(map[string]metav1.Time, 0)
+	ct := make(map[string]metav1.Time, 0)
 	git := make(map[string]metav1.Time, 0)
-	rt :=  make(map[string]metav1.Time, 0)
+	rt := make(map[string]metav1.Time, 0)
 
 	apt := make(map[string][]time.Duration, 0)
 
@@ -82,21 +84,21 @@ func NewVmManager() Manager {
 	af := make(map[string]func(*VmManager, interface{}) error, 0)
 
 	af[CREATE_ACTION] = (*VmManager).Create
-	// af[DELETE_ACTION] = (*VmManager).Delete
-	// af[LIST_ACTION] = (*VmManager).List
+	af[DELETE_ACTION] = (*VmManager).Delete
+	af[LIST_ACTION] = (*VmManager).List
 
 	vmc := make(chan struct{})
 
 	return &VmManager{
-		startTimes:	    cst,
-		createdTimes:	ct,
-		gotIpTimes:		git,
-		ReadyTimes:		rt,
+		startTimes:   cst,
+		createdTimes: ct,
+		gotIpTimes:   git,
+		ReadyTimes:   rt,
 
 		apiTimes: apt,
 
 		namespace: "default", //apiv1.NamespaceDefault,
-		vmNs:     vmn,
+		vmNs:      vmn,
 		nsSet:     ns,
 
 		statsMutex: sync.RWMutex{},
@@ -105,7 +107,7 @@ func NewVmManager() Manager {
 
 		ActionFuncs: af,
 		//vmController: nil,
-		vmChan:      vmc,
+		vmChan:         vmc,
 		startTimestamp: metav1.Now().Format("2006-01-02T15-04-05"),
 	}
 }
@@ -114,10 +116,10 @@ func NewVmManager() Manager {
 func (mgr *VmManager) initCache(resourceType string) {
 	dynamicClient, err := dynamic.NewForConfig(mgr.config)
 	if err != nil {
-        panic(err)
-    }
+		panic(err)
+	}
 	var customeResource = schema.GroupVersionResource{Group: "vmoperator.vmware.com", Version: "v1alpha1", Resource: "virtualmachines"}
-	dynInformer := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, mgr.namespace , nil)
+	dynInformer := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dynamicClient, 0, mgr.namespace, nil)
 	informer := dynInformer.ForResource(customeResource).Informer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
@@ -125,10 +127,10 @@ func (mgr *VmManager) initCache(resourceType string) {
 			defer mgr.statsMutex.Unlock()
 			u := obj.(*unstructured.Unstructured)
 			unstructured := u.UnstructuredContent()
-	 		var myvirtualmachine v1alpha1.VirtualMachine
-	 		err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured, &myvirtualmachine)
+			var myvirtualmachine v1alpha1.VirtualMachine
+			err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured, &myvirtualmachine)
 
-			if  myvirtualmachine.Status.Phase == "" {
+			if myvirtualmachine.Status.Phase == "" {
 				if _, ok := mgr.startTimes[myvirtualmachine.GetName()]; !ok {
 					mgr.startTimes[myvirtualmachine.GetName()] = metav1.Now()
 				}
@@ -145,7 +147,7 @@ func (mgr *VmManager) initCache(resourceType string) {
 			var myvirtualmachine v1alpha1.VirtualMachine
 			err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured, &myvirtualmachine)
 
-			if myvirtualmachine.Status.VmIp != "" &&  strings.Count(myvirtualmachine.Status.VmIp, ".") == 3 {
+			if myvirtualmachine.Status.VmIp != "" && strings.Count(myvirtualmachine.Status.VmIp, ".") == 3 {
 				if _, ok := mgr.gotIpTimes[myvirtualmachine.GetName()]; !ok {
 					mgr.gotIpTimes[myvirtualmachine.GetName()] = metav1.Now()
 					log.Info("Virtual Machine got IP Address")
@@ -186,7 +188,7 @@ func (mgr *VmManager) Init(
 	mgr.config = kubeConfig
 
 	scheme := runtime.NewScheme()
-    _ = v1alpha1.AddToScheme(scheme)
+	_ = v1alpha1.AddToScheme(scheme)
 
 	sharedClient, err := ctrlClient.New(kubeConfig, ctrlClient.Options{
 		Scheme: scheme,
@@ -261,7 +263,7 @@ func (mgr *VmManager) Create(spec interface{}) error {
 		latency := metav1.Now().Time.Sub(startTime.Time).Round(time.Microsecond)
 
 		if err != nil {
-			fmt.Printf("Error ",err)
+			fmt.Printf("Error ", err)
 			panic(err)
 		}
 
@@ -281,7 +283,41 @@ func (mgr *VmManager) Create(spec interface{}) error {
  * This function implements the LIST action.
  */
 func (mgr *VmManager) List(n interface{}) error {
-	log.Info("Nedd to implement this later!!....")
+	switch s := n.(type) {
+	default:
+		log.Errorf("Invalid spec %T for VM list action.", s)
+		return fmt.Errorf("Invalid spec %T for VM list action.", s)
+	case ActionSpec:
+		cid := s.Tid % len(mgr.clientsets)
+		ns := mgr.namespace
+
+		if s.Namespace != "" {
+			ns = s.Namespace
+		}
+
+		// vms := make([]v1alpha1.VirtualMachine, 0)
+		vmspecList := &v1alpha1.VirtualMachineList{}
+
+		labels := map[string]string{s.LabelKey: s.LabelValue}
+		options := []client.ListOption{
+			client.InNamespace(ns),
+			client.MatchingLabels(labels),
+		}
+		log.Info(options)
+		// log.Infof("Label Key: %s, Label Value: %s", s.LabelKey, s.LabelValue)
+		startTime := metav1.Now()
+
+		//TOOD: implement filtering using key,values (similar to pods)
+		err := mgr.clientsets[cid].List(context.Background(), vmspecList, client.InNamespace(ns))
+		latency := metav1.Now().Time.Sub(startTime.Time).Round(time.Microsecond)
+		if err != nil {
+			log.Errorf("Error during VM list: %v", err)
+			return err
+		}
+		mgr.alMutex.Lock()
+		mgr.apiTimes[LIST_ACTION] = append(mgr.apiTimes[LIST_ACTION], latency)
+		mgr.alMutex.Unlock()
+	}
 	return nil
 }
 
@@ -289,7 +325,57 @@ func (mgr *VmManager) List(n interface{}) error {
  * This function implements the DELETE action.
  */
 func (mgr *VmManager) Delete(n interface{}) error {
-	log.Info("Nedd to implement this later!!....")
+	switch s := n.(type) {
+	default:
+		log.Errorf("Invalid spec %T for VM delete action.", s)
+		return fmt.Errorf("Invalid spec %T for VM delete action.", s)
+	case ActionSpec:
+		cid := s.Tid % len(mgr.clientsets)
+
+		ns := mgr.namespace
+
+		if s.Namespace != "" {
+			ns = s.Namespace
+		}
+
+		vms := make([]v1alpha1.VirtualMachine, 0)
+		vmspecList := &v1alpha1.VirtualMachineList{}
+
+		labels := map[string]string{s.LabelKey: s.LabelValue}
+		options := []client.ListOption{
+			client.InNamespace(ns),
+			client.MatchingLabels(labels),
+		}
+		log.Info(options)
+
+		//TOOD: implement filtering using key,values (similar to pods)
+		err := mgr.clientsets[cid].List(context.Background(), vmspecList, client.InNamespace(ns))
+		if err != nil {
+			return err
+		}
+		vms = append(vms, vmspecList.Items...)
+
+		for _, currVM := range vms {
+			log.Infof("Deleting VM %v", currVM.Name)
+
+			startTime := metav1.Now()
+			err := mgr.clientsets[cid].Delete(context.TODO(), &currVM)
+			latency := metav1.Now().Time.Sub(startTime.Time).Round(time.Microsecond)
+
+			if err != nil {
+				log.Errorf("Error during VM deletion: %v", err)
+				return err
+			}
+
+			mgr.alMutex.Lock()
+			mgr.apiTimes[DELETE_ACTION] = append(mgr.apiTimes[DELETE_ACTION], latency)
+			mgr.alMutex.Unlock()
+
+			mgr.vmMutex.Lock()
+			delete(mgr.vmNs, currVM.Name)
+			mgr.vmMutex.Unlock()
+		}
+	}
 	return nil
 }
 
@@ -487,7 +573,7 @@ func (mgr *VmManager) CalculateStats() {
 		func(i, j int) bool { return createdToGotIpLatency[i] < createdToGotIpLatency[j] })
 	sort.Slice(startToReadyLatency,
 		func(i, j int) bool { return startToReadyLatency[i] < startToReadyLatency[j] })
-	
+
 	var mid, min, max, p99 float32
 
 	if len(startToCreatedLatency) > 0 {

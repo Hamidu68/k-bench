@@ -1,10 +1,11 @@
 apiVersion: vmoperator.vmware.com/v1alpha1
 kind: VirtualMachine
 metadata:
- name: shubham-testvm22 
+ name: vm1 
  namespace: kbench-vm-namespace
 spec:
  className: best-effort-small
- imageName: ob-18186591-photon-3-k8s-v1.20.7---vmware.1-tkg.1.7fb9067
+ #TODO: imageName should be dynamic
+ imageName: vmi-eb9dea97ecad960e8
  powerState: poweredOn
  storageClass: wcp-policy
