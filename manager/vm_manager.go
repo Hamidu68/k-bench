@@ -158,7 +158,7 @@ func (mgr *VmManager) initCache(resourceType string) {
 			} else if myvirtualmachine.Status.PowerState == v1alpha1.VirtualMachinePoweredOn || myvirtualmachine.Status.Phase == v1alpha1.Created {
 				if _, ok := mgr.createdTimes[myvirtualmachine.GetName()]; !ok {
 					mgr.createdTimes[myvirtualmachine.GetName()] = metav1.Now()
-					log.Info("Virtual Machine Created")
+					log.Info("Virtual Machine %s Created", myvirtualmachine.GetName())
 				}
 			}
 		},
@@ -283,41 +283,42 @@ func (mgr *VmManager) Create(spec interface{}) error {
  * This function implements the LIST action.
  */
 func (mgr *VmManager) List(n interface{}) error {
-	switch s := n.(type) {
-	default:
-		log.Errorf("Invalid spec %T for VM list action.", s)
-		return fmt.Errorf("Invalid spec %T for VM list action.", s)
-	case ActionSpec:
-		cid := s.Tid % len(mgr.clientsets)
-		ns := mgr.namespace
-
-		if s.Namespace != "" {
-			ns = s.Namespace
-		}
-
-		// vms := make([]v1alpha1.VirtualMachine, 0)
-		vmspecList := &v1alpha1.VirtualMachineList{}
-
-		labels := map[string]string{s.LabelKey: s.LabelValue}
-		options := []client.ListOption{
-			client.InNamespace(ns),
-			client.MatchingLabels(labels),
-		}
-		log.Info(options)
-		// log.Infof("Label Key: %s, Label Value: %s", s.LabelKey, s.LabelValue)
-		startTime := metav1.Now()
-
-		//TOOD: implement filtering using key,values (similar to pods)
-		err := mgr.clientsets[cid].List(context.Background(), vmspecList, client.InNamespace(ns))
-		latency := metav1.Now().Time.Sub(startTime.Time).Round(time.Microsecond)
-		if err != nil {
-			log.Errorf("Error during VM list: %v", err)
-			return err
-		}
-		mgr.alMutex.Lock()
-		mgr.apiTimes[LIST_ACTION] = append(mgr.apiTimes[LIST_ACTION], latency)
-		mgr.alMutex.Unlock()
+	s, ok := n.(ActionSpec)
+	if !ok {
+		return fmt.Errorf("Invalid spec %T for VM list action.", n)
 	}
+
+	cid := s.Tid % len(mgr.clientsets)
+	ns := s.Namespace
+	if ns == "" {
+		ns = mgr.namespace
+	}
+
+	vmspecList := &v1alpha1.VirtualMachineList{}
+	options := []client.ListOption{client.InNamespace(ns)}
+
+	if s.LabelKey != "" && s.LabelValue != "" {
+		options = append(options, client.MatchingLabels{s.LabelKey: s.LabelValue})
+	}
+
+	if s.Name != "" {
+		options = append(options, client.MatchingFields{"metadata.name": s.Name})
+	}
+
+	startTime := metav1.Now()
+	err := mgr.clientsets[cid].List(context.Background(), vmspecList, options...)
+	latency := metav1.Now().Time.Sub(startTime.Time).Round(time.Microsecond)
+
+	if err != nil {
+		return fmt.Errorf("Error during VM list: %v", err)
+	}
+
+	log.Infof("Listed %v VMs", len(vmspecList.Items))
+
+	mgr.alMutex.Lock()
+	mgr.apiTimes[LIST_ACTION] = append(mgr.apiTimes[LIST_ACTION], latency)
+	mgr.alMutex.Unlock()
+
 	return nil
 }
 
@@ -341,20 +342,22 @@ func (mgr *VmManager) Delete(n interface{}) error {
 		vms := make([]v1alpha1.VirtualMachine, 0)
 		vmspecList := &v1alpha1.VirtualMachineList{}
 
-		labels := map[string]string{s.LabelKey: s.LabelValue}
-		options := []client.ListOption{
-			client.InNamespace(ns),
-			client.MatchingLabels(labels),
-		}
-		log.Info(options)
+		options := []client.ListOption{client.InNamespace(ns)}
 
-		//TOOD: implement filtering using key,values (similar to pods)
-		err := mgr.clientsets[cid].List(context.Background(), vmspecList, client.InNamespace(ns))
+		if s.LabelKey != "" && s.LabelValue != "" {
+			options = append(options, client.MatchingLabels{s.LabelKey: s.LabelValue})
+		}
+
+		if s.Name != "" {
+			options = append(options, client.MatchingFields{"metadata.name": s.Name})
+		}
+
+		err := mgr.clientsets[cid].List(context.Background(), vmspecList, options...)
 		if err != nil {
 			return err
 		}
 		vms = append(vms, vmspecList.Items...)
-
+		log.Infof("Will be deleting %v VMs", len(vmspecList.Items))
 		for _, currVM := range vms {
 			log.Infof("Deleting VM %v", currVM.Name)
 
